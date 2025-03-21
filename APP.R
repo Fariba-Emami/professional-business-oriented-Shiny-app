@@ -1,15 +1,12 @@
-# --- 1. Setup: Install and Load Libraries ---
-# This section makes sure you have all the necessary tools.
-# If a tool is missing, it will automatically install it.
-list_of_packages <- c("rio", "tidyverse", "shiny", "bslib", "leaflet", "DT", "plotly", "highcharter", "waiter", "shinycssloaders", "rnaturalearthdata")
-new_packages <- list_of_packages[!(list_of_packages %in% installed.packages()[,"Package"])]
-if(length(new_packages)) install.packages(new_packages)
-
-# Now, load the tools into your R session so you can use them.
-library(rio)       # For importing data (like CSV files)
-library(tidyverse) # For data manipulation and plotting
-library(shiny)     # For building interactive web apps
-library(bslib)     # For themes (like dark mode)
+library(shiny)
+library(rio)        # For easy data import
+library(dplyr)
+library(ggplot2)
+library(shinythemes)
+library(tidyverse)
+library(bslib)       # Enhanced UI
+library(shinyWidgets) # Enhanced input widgets
+library(shinyjs)      # Show/hide UI elements
 library(leaflet)   # For creating interactive maps
 library(DT)        # For interactive tables
 library(plotly)    # For interactive plots
@@ -17,25 +14,34 @@ library(highcharter) # For interactive charts
 library(waiter)    # For loading screens
 library(shinycssloaders) # For spinner animations
 library(rnaturalearthdata) #For maps
+library(rnaturalearth)
+library(lubridate)
 
-# --- 2. Data Import and Cleaning ---
-# This section reads your data and prepares it for use in the app.
+# **1. Data Preparation**
 
-## --- 2. Data Import and Cleaning ---
-# This section reads your data and prepares it for use in the app.
+# Store the file path
+data_file <- "data/online_retail.csv"
 
-# Read the data from the CSV file
-retail_data <- import("data/online_retail.csv")
+  # Read the data from the CSV file
+  retail_data <- import("data/online_retail.csv")
+  
+  # Rename the 'Customer ID' column to 'CustomerID' for easier use
+  retail_data <- retail_data %>%
+    rename(CustomerID = `Customer ID`)
+  
+  # Remove rows with missing CustomerID, calculate Revenue, and ensure InvoiceDate is a date
+  retail_data <- retail_data %>%
+    filter(!is.na(CustomerID)) %>%
+    mutate(Revenue = Quantity * Price) %>%
+    mutate(InvoiceDate = as.Date(InvoiceDate))
 
-# Rename the 'Customer ID' column to 'CustomerID' for easier use
-retail_data <- retail_data %>%
-  rename(CustomerID = `Customer ID`)
-
-# Remove rows with missing CustomerID, calculate Revenue, and ensure InvoiceDate is a date
-retail_data <- retail_data %>%
-  filter(!is.na(CustomerID)) %>%
-  mutate(Revenue = Quantity * Price) %>%
-  mutate(InvoiceDate = as.Date(InvoiceDate))
+  
+  
+  
+# Make sure the data is not null
+if (nrow(retail_data) == 0) {
+  stop("No data was loaded. Check the file path and format.")
+}
 
 # --- 3. User Interface (UI) Definition ---
 # This section describes the layout and appearance of your web app.
@@ -44,6 +50,16 @@ ui <- page_fluid(
   title = "Interactive Retail Dashboard",  # Set the title of the app
   use_waiter(), # Enable loading screens
   waiter_preloader(html = tagList(spin_loaders(16, color = "#3c8dbc"))), # Initial loading screen
+  
+  tags$head(
+    tags$style(HTML("
+      .value-box-title {
+        font-size: 16px;
+        font-weight: bold;
+        color: #333;
+      }
+    "))
+  ),
   
   layout_sidebar(   # Overall layout with a sidebar
     sidebar = sidebar(  # Define the sidebar content
@@ -74,9 +90,10 @@ ui <- page_fluid(
         card_header("Top-Selling Products"),
         card_body(highchartOutput("top_products_plot") %>% withSpinner()) # Chart with loading spinner
       ),
+      # **New: Column Chart for Revenue Distribution**
       card(
-        card_header("Revenue Distribution by Country"),
-        card_body(highchartOutput("revenue_by_country_plot") %>% withSpinner()) # Chart with loading spinner
+        card_header("Revenue Distribution by Country (Column Chart)"),
+        card_body(highchartOutput("revenue_by_country_column_plot") %>% withSpinner())
       )
     ),
     
@@ -104,6 +121,7 @@ server <- function(input, output, session) {
   
   # Filter data based on user selections
   filtered_data <- reactive({
+    req(retail_data) #Make sure you have the data
     data <- retail_data %>%
       filter(InvoiceDate >= input$date_range[1] & InvoiceDate <= input$date_range[2])
     
@@ -116,6 +134,7 @@ server <- function(input, output, session) {
   
   # --- Output: Sales Trends Over Time (Plotly) ---
   output$sales_trend_plot <- renderPlotly({
+    req(filtered_data())
     sales_trend <- filtered_data() %>%
       group_by(InvoiceDate, Country) %>%
       summarise(TotalRevenue = sum(Revenue, na.rm = TRUE), .groups = 'drop')
@@ -133,6 +152,7 @@ server <- function(input, output, session) {
   
   # --- Output: Total Revenue by Country (Highcharter Map) ---
   output$revenue_map <- renderHighchart({
+    req(filtered_data())
     revenue_by_country <- filtered_data() %>%
       group_by(Country) %>%
       summarise(TotalRevenue = sum(Revenue, na.rm = TRUE), .groups = 'drop')
@@ -160,6 +180,7 @@ server <- function(input, output, session) {
   
   # --- Output: Top-Selling Products (Highcharter) ---
   output$top_products_plot <- renderHighchart({
+    req(filtered_data())
     top_products <- filtered_data() %>%
       group_by(Description, Country) %>%
       summarise(TotalQuantity = sum(Quantity, na.rm = TRUE), .groups = 'drop')
@@ -172,14 +193,15 @@ server <- function(input, output, session) {
       hc_legend(enabled = TRUE)
   })
   
-  # --- Output: Revenue Distribution by Country (Highcharter) ---
-  output$revenue_by_country_plot <- renderHighchart({
+  # --- Output: Revenue Distribution by Country (Column Chart) ---
+  output$revenue_by_country_column_plot <- renderHighchart({
+    req(filtered_data())
     revenue_by_country <- filtered_data() %>%
       group_by(Country) %>%
       summarise(TotalRevenue = sum(Revenue, na.rm = TRUE), .groups = 'drop')
     
     hchart(revenue_by_country, "column", hcaes(x = Country, y = TotalRevenue)) %>%
-      hc_title(text = "Total Revenue by Country") %>%
+      hc_title(text = "Total Revenue by Country (Column Chart)") %>%
       hc_xAxis(title = list(text = "Country")) %>%
       hc_yAxis(title = list(text = "Total Revenue")) %>%
       hc_tooltip(pointFormat = "<b>{point.Country}:</b> ${point.TotalRevenue:,.0f}")
@@ -187,6 +209,7 @@ server <- function(input, output, session) {
   
   # --- Output: Sales by Country (Leaflet Map) ---
   output$sales_leaflet_map <- renderLeaflet({
+    req(filtered_data())
     sales_by_country <- filtered_data() %>%
       group_by(Country) %>%
       summarise(TotalRevenue = sum(Revenue, na.rm = TRUE), .groups = 'drop')
@@ -209,6 +232,7 @@ server <- function(input, output, session) {
   
   # --- Output: Interactive Transaction Table (DT) ---
   output$transaction_table <- renderDT({
+    req(filtered_data())
     datatable(filtered_data(), extensions = 'Buttons',
               options = list(dom = 'Bfrtip', buttons = c('copy', 'csv', 'excel', 'pdf', 'print'),
                              pageLength = 10))
