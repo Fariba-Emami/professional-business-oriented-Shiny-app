@@ -21,6 +21,9 @@ library(rnaturalearthdata) #For maps
 # --- 2. Data Import and Cleaning ---
 # This section reads your data and prepares it for use in the app.
 
+## --- 2. Data Import and Cleaning ---
+# This section reads your data and prepares it for use in the app.
+
 # Read the data from the CSV file
 retail_data <- import("data/online_retail.csv")
 
@@ -213,4 +216,5 @@ server <- function(input, output, session) {
 }
 
 # --- 5. Run the App ---
-# This line starts the 
+# This line starts the Shiny app.
+shinyApp(ui, server)
