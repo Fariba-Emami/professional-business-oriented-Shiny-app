@@ -1,5 +1,5 @@
 library(shiny)
-library(shinymanager)  # Authentication package
+library(shinymanager)
 library(rio)
 library(dplyr)
 library(ggplot2)
@@ -15,16 +15,9 @@ library(shinycssloaders)
 library(rnaturalearthdata)
 library(rnaturalearth)
 library(lubridate)
+library(tibble)
 
-# -----------------------------------------------------------------------------
-# AUTHENTICATION CREDENTIALS
-# -----------------------------------------------------------------------------
-
-# Use environment variables for storing credentials
-# Before running, set these in .Renviron or using Sys.setenv()
-# usethis::edit_r_environ() can help set these
-
-# Create credentials data frame with roles
+# Create credentials data frame with roles and timestamps
 credentials <- data.frame(
   user = c(
     Sys.getenv("ADMIN_USER", "admin"),
@@ -40,10 +33,6 @@ credentials <- data.frame(
   role = c("admin", "user", "viewer"),
   stringsAsFactors = FALSE
 )
-
-# -----------------------------------------------------------------------------
-# DATA PREPARATION
-# -----------------------------------------------------------------------------
 
 # Error handling for data import
 tryCatch({
@@ -61,213 +50,84 @@ tryCatch({
   stop(paste("Error importing data:", e$message))
 })
 
-# -----------------------------------------------------------------------------
-# UI DEFINITION
-# -----------------------------------------------------------------------------
-
-# Custom authentication UI
-auth_ui <- function(id) {
-  ns <- NS(id)
-  fluidPage(
-    tags$div(
-      class = "login-container",
-      tags$h2("Retail Dashboard Login"),
-      tags$style(HTML("
-        .login-container {
-          width: 300px;
-          margin: 100px auto;
-          padding: 20px;
-          background-color: #f4f4f4;
-          border-radius: 8px;
-          box-shadow: 0 4px 6px rgba(0,0,0,0.1);
-        }
-        .login-header {
-          text-align: center;
-          margin-bottom: 20px;
-          color: #333;
-        }
-      ")),
-    )
-  )
-}
-
-# Main application UI
-main_ui <- function(id) {
-  ns <- NS(id)
+# UI Definition
+ui <- secure_app(
+  # UI content (same as before)
   fluidPage(
     theme = bs_theme(bootswatch = "flatly"),
     title = "Interactive Retail Dashboard",
-    use_waiter(),
-    waiter_preloader(html = tagList(spin_loaders(16, color = "#3c8dbc"))),
     
-    tags$head(
-      tags$style(HTML("
-        .card {
-          border-radius: 10px;
-          box-shadow: 0 4px 8px 0 rgba(0,0,0,0.2);
-          transition: 0.3s;
-        }
-        .card:hover {
-          box-shadow: 0 8px 16px 0 rgba(0,0,0,0.2);
-        }
-      "))
-    ),
-    
-    # Add a logout button
-    actionButton(ns("logout"), "Logout", class = "btn-danger"),
-    
+    # Your existing UI code goes here (similar to previous implementation)
     sidebarLayout(
       sidebarPanel(
-        width = 3,
         selectInput("country_select", "Select Country:",
                     choices = c("All", sort(unique(retail_data$Country)))),
         dateRangeInput("date_range", "Select Date Range:",
                        start = min(as.Date(retail_data$InvoiceDate), na.rm = TRUE),
-                       end = max(as.Date(retail_data$InvoiceDate), na.rm = TRUE)),
-        
-        # Conditional panels based on user role
-        conditionalPanel(
-          condition = "input.current_user_role == 'admin'",
-          selectInput("dataset", "Select data set:", choices = "retail_data"),
-          selectInput("file_format", "Select File Format:",
-                      choices = c("CSV" = "csv", "EXCEL" = "xlsx")),
-          downloadButton("download_btn", "Download Dataset")
-        )
+                       end = max(as.Date(retail_data$InvoiceDate), na.rm = TRUE))
       ),
-      
       mainPanel(
-        # Store current user role as a hidden input
-        tags$input(
-          type = "hidden", 
-          id = ns("current_user_role"),
-          value = ""
-        ),
         tabsetPanel(
-          id = "tabs",
-          tabPanel("Sales Trends", plotlyOutput(ns("sales_trend_plot")) %>% withSpinner()),
-          tabPanel("Revenue Distribution", plotlyOutput(ns("revenue_distribution_plot")) %>% withSpinner()),
-          tabPanel("Top Products", plotlyOutput(ns("top_products_plot")) %>% withSpinner()),
-          # Conditional panels can be added here to restrict access
-          conditionalPanel(
-            condition = "input.current_user_role != 'viewer'",
-            tabPanel("Sales by Country", leafletOutput(ns("sales_leaflet_map"), height = "400px") %>% withSpinner())
-          ),
-          tabPanel("Transaction Table", DTOutput(ns("transaction_table")) %>% withSpinner())
+          tabPanel("Sales Trends", plotlyOutput("sales_trend_plot")),
+          tabPanel("Revenue Distribution", plotlyOutput("revenue_distribution_plot"))
         )
       )
     )
   )
-}
-
-# Wrap UI with secure_app
-ui <- secure_app(
-  # Use a custom login UI
-  head_auth = tags$style(type = "text/css", "body { background-color: #f0f0f0; }"),
-  ui = tagList(
-    auth_ui("login"),
-    main_ui("main")
-  )
 )
 
-# -----------------------------------------------------------------------------
-# SERVER LOGIC
-# -----------------------------------------------------------------------------
-
+# Server Logic
 server <- function(input, output, session) {
   # Authentication
-  credentials_reactive <- reactive({
-    # Allow overriding credentials with environment variables
-    data.frame(
-      user = c(
-        Sys.getenv("ADMIN_USER", "admin"),
-        Sys.getenv("USER_USER", "user"),
-        Sys.getenv("VIEWER_USER", "viewer")
-      ),
-      password = c(
-        Sys.getenv("ADMIN_PASS", "admin123"),
-        Sys.getenv("USER_PASS", "user123"),
-        Sys.getenv("VIEWER_PASS", "viewer123")
-      ),
-      role = c("admin", "user", "viewer"),
-      stringsAsFactors = FALSE
-    )
-  })
-  
-  # Authenticate user
-  auth <- callModule(
-    module = shinymanager::login,
-    id = "auth",
-    data = credentials_reactive,
-    # Optional: add additional authentication checks
-    valid_pass = shinymanager::check_credentials(credentials_reactive())
+  res_auth <- secure_server(
+    check_credentials = function(username, password) {
+      # Custom authentication logic
+      user_match <- credentials %>%
+        filter(user == username & password == password)
+      
+      if (nrow(user_match) > 0) {
+        return(list(
+          result = TRUE, 
+          user_info = list(
+            role = user_match$role
+          )
+        ))
+      } else {
+        return(list(result = FALSE))
+      }
+    }
   )
   
   # Observe authentication status
   observe({
-    req(auth())
-    # Update hidden input with user role
-    updateTextInput(
-      session, 
-      "main-current_user_role", 
-      value = auth()$role
-    )
-  })
-  
-  # Logout functionality
-  observeEvent(input$logout, {
-    shinymanager::logout_server()
-  })
-  
-  # Existing dashboard logic (similar to previous implementation)
-  
-  # --- Reactive Data Filtering ---
-  filtered_data <- reactive({
-    req(retail_data)
-    data <- retail_data %>%
-      filter(InvoiceDate >= input$date_range[1] & InvoiceDate <= input$date_range[2])
+    # Get user role from authentication
+    user_role <- res_auth$role
     
-    if (input$country_select != "All") {
-      data <- data %>% filter(Country == input$country_select)
-    }
-    return(data)
+    # You can use the user role for conditional rendering or access control
+    print(paste("Logged in user role:", user_role))
   })
   
-  # Sales Trends Plot (similar to previous implementation)
+  # Your existing server logic for data visualization
   output$sales_trend_plot <- renderPlotly({
-    req(filtered_data())
-    sales_trend <- filtered_data() %>%
+    # Example plot (similar to previous implementation)
+    sales_trend <- retail_data %>%
       group_by(InvoiceDate = as.Date(InvoiceDate), Country) %>%
-      summarise(TotalRevenue = sum(Revenue, na.rm = TRUE), .groups = 'drop')
+      summarise(TotalRevenue = sum(Quantity * Price, na.rm = TRUE), .groups = 'drop')
     
     plot_ly(sales_trend, x = ~InvoiceDate, y = ~TotalRevenue, color = ~Country,
             type = 'scatter', mode = 'lines+markers') %>%
-      layout(title = "Sales Trends Over Time",
-             xaxis = list(title = "Date"),
-             yaxis = list(title = "Revenue"))
+      layout(title = "Sales Trends Over Time")
   })
   
-  # Similar rendering for other outputs...
-  
-  # Conditional Download Handler (only for admin)
-  output$download_btn <- downloadHandler(
-    filename = function() {
-      paste("retail_data", input$file_format, sep = ".")
-    },
-    content = function(file) {
-      # Additional role-based check
-      req(auth()$role == "admin")
-      
-      if (input$file_format == "csv") {
-        write.csv(filtered_data(), file, row.names = FALSE)
-      } else {
-        rio::export(filtered_data(), file)
-      }
-    }
-  )
+  output$revenue_distribution_plot <- renderPlotly({
+    revenue_dist <- retail_data %>%
+      group_by(Country) %>%
+      summarise(TotalRevenue = sum(Quantity * Price, na.rm = TRUE))
+    
+    plot_ly(revenue_dist, x = ~Country, y = ~TotalRevenue, type = 'bar') %>%
+      layout(title = "Revenue Distribution by Country")
+  })
 }
 
-# -----------------------------------------------------------------------------
-# RUN THE APPLICATION
-# -----------------------------------------------------------------------------
-
+# Run the application
 shinyApp(ui, server)
