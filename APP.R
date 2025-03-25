@@ -52,12 +52,10 @@ tryCatch({
 
 # UI Definition
 ui <- secure_app(
-  # UI content (same as before)
+  # UI content 
   fluidPage(
     theme = bs_theme(bootswatch = "flatly"),
     title = "Interactive Retail Dashboard",
-    
-    # Your existing UI code goes here (similar to previous implementation)
     sidebarLayout(
       sidebarPanel(
         selectInput("country_select", "Select Country:",
@@ -100,10 +98,10 @@ server <- function(input, output, session) {
   
   # Observe authentication status
   observe({
-    # Get user role from authentication
+    #  user role from authentication
     user_role <- res_auth$role
     
-    # You can use the user role for conditional rendering or access control
+    # the user role for conditional rendering or access control
     print(paste("Logged in user role:", user_role))
   })
   
