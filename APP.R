@@ -1,4 +1,5 @@
 library(shiny)
+library(shinymanager)  # Add authentication package
 library(rio)
 library(dplyr)
 library(ggplot2)
@@ -16,81 +17,99 @@ library(rnaturalearth)
 library(lubridate)
 
 # -----------------------------------------------------------------------------
+# AUTHENTICATION CREDENTIALS
+# -----------------------------------------------------------------------------
+
+# Create credentials data frame
+credentials <- data.frame(
+  user = c("admin", "user"),
+  password = c("admin123", "user123"),
+  stringsAsFactors = FALSE
+)
+
+# -----------------------------------------------------------------------------
 # DATA PREPARATION
 # -----------------------------------------------------------------------------
 
-data_file <- "data/online_retail.csv"
-retail_data <- import(data_file) %>%
-  rename(CustomerID = `Customer ID`) %>%
-  filter(!is.na(CustomerID)) %>%
-  mutate(
-    Revenue = Quantity * Price,
-    InvoiceDate = as.Date(InvoiceDate)
-  )
-
-if (nrow(retail_data) == 0) stop("No data was loaded. Check the file path and format.")
+# Error handling for data import
+tryCatch({
+  data_file <- "data/online_retail.csv"
+  retail_data <- import(data_file) %>%
+    rename(CustomerID = `Customer ID`) %>%
+    filter(!is.na(CustomerID)) %>%
+    mutate(
+      Revenue = Quantity * Price,
+      # Use parse_date_time for more flexible date parsing
+      InvoiceDate = parse_date_time(as.character(InvoiceDate), orders = c("ymd HMS", "mdy HMS", "dmy HMS"))
+    )
+  
+  if (nrow(retail_data) == 0) stop("No data was loaded. Check the file path and format.")
+}, error = function(e) {
+  stop(paste("Error importing data:", e$message))
+})
 
 # -----------------------------------------------------------------------------
 # UI DEFINITION
 # -----------------------------------------------------------------------------
 
-ui <- page_fluid(
-  theme = bs_theme(bootswatch = "flatly"),
-  title = "Interactive Retail Dashboard",
-  use_waiter(),
-  waiter_preloader(html = tagList(spin_loaders(16, color = "#3c8dbc"))),
-  
-  tags$head(
-    tags$style(HTML("
-      .card {
-        border-radius: 10px;
-        box-shadow: 0 4px 8px 0 rgba(0,0,0,0.2);
-        transition: 0.3s;
-      }
+# Wrap the UI with secure_app from shinymanager
+ui <- secure_app(
+  fluidPage(
+    theme = bs_theme(bootswatch = "flatly"),
+    title = "Interactive Retail Dashboard",
+    use_waiter(),
+    waiter_preloader(html = tagList(spin_loaders(16, color = "#3c8dbc"))),
+    
+    tags$head(
+      tags$style(HTML("
+        .card {
+          border-radius: 10px;
+          box-shadow: 0 4px 8px 0 rgba(0,0,0,0.2);
+          transition: 0.3s;
+        }
 
-      .card:hover {
-        box-shadow: 0 8px 16px 0 rgba(0,0,0,0.2);
-      }
+        .card:hover {
+          box-shadow: 0 8px 16px 0 rgba(0,0,0,0.2);
+        }
 
-      .card-header {
-        background-color: #f0f0f0;
-        font-weight: bold;
-        border-bottom: 1px solid #ddd;
-        padding: 10px;
-      }
+        .card-header {
+          background-color: #f0f0f0;
+          font-weight: bold;
+          border-bottom: 1px solid #ddd;
+          padding: 10px;
+        }
 
-      .sidebar {
-        background-color: #f8f9fa;
-        border-right: 1px solid #eee;
-      }
-    "))
-  ),
-  
-  layout_sidebar(
-    sidebar = sidebar(
-      width = "250px",
-      title = "Filters",
-      class = "sidebar",
-      selectInput("country_select", "Select Country:",
-                  choices = c("All", sort(unique(retail_data$Country)))),
-      dateRangeInput("date_range", "Select Date Range:",
-                     start = min(retail_data$InvoiceDate, na.rm = TRUE),
-                     end = max(retail_data$InvoiceDate, na.rm = TRUE)),
-      
-      selectInput("dataset", "Select data set:", choices = "retail_data"),
-      selectInput("file_format", "Select File Format:",
-                  choices = c("CSV" = "csv", "EXCEL" = "xlsx")),
-      downloadButton("download_btn", "Download Dataset")
+        .sidebar {
+          background-color: #f8f9fa;
+          border-right: 1px solid #eee;
+        }
+      "))
     ),
     
-    mainPanel(
-      tabsetPanel(  # Use tabsetPanel
-        id = "tabs",
-        tabPanel("Sales Trends", card(card_header("Sales Trends Over Time"), card_body(plotlyOutput("sales_trend_plot") %>% withSpinner()))),
-        tabPanel("Revenue Distribution", card(card_header("Revenue Distribution"), card_body(plotlyOutput("revenue_distribution_plot") %>% withSpinner()))),
-        tabPanel("Top Products", card(card_header("Top-Selling Products"), card_body(plotlyOutput("top_products_plot") %>% withSpinner()))),
-        tabPanel("Sales by Country", card(card_header("Sales by Country"), card_body(leafletOutput("sales_leaflet_map", height = "400px") %>% withSpinner()))),
-        tabPanel("Transaction Table", card(card_header("Interactive Transaction Table"), card_body(DTOutput("transaction_table") %>% withSpinner())))
+    sidebarLayout(
+      sidebarPanel(
+        width = 3,
+        selectInput("country_select", "Select Country:",
+                    choices = c("All", sort(unique(retail_data$Country)))),
+        dateRangeInput("date_range", "Select Date Range:",
+                       start = min(as.Date(retail_data$InvoiceDate), na.rm = TRUE),
+                       end = max(as.Date(retail_data$InvoiceDate), na.rm = TRUE)),
+        
+        selectInput("dataset", "Select data set:", choices = "retail_data"),
+        selectInput("file_format", "Select File Format:",
+                    choices = c("CSV" = "csv", "EXCEL" = "xlsx")),
+        downloadButton("download_btn", "Download Dataset")
+      ),
+      
+      mainPanel(
+        tabsetPanel(
+          id = "tabs",
+          tabPanel("Sales Trends", plotlyOutput("sales_trend_plot") %>% withSpinner()),
+          tabPanel("Revenue Distribution", plotlyOutput("revenue_distribution_plot") %>% withSpinner()),
+          tabPanel("Top Products", plotlyOutput("top_products_plot") %>% withSpinner()),
+          tabPanel("Sales by Country", leafletOutput("sales_leaflet_map", height = "400px") %>% withSpinner()),
+          tabPanel("Transaction Table", DTOutput("transaction_table") %>% withSpinner())
+        )
       )
     )
   )
@@ -101,6 +120,15 @@ ui <- page_fluid(
 # -----------------------------------------------------------------------------
 
 server <- function(input, output, session) {
+  # Authentication
+  res_auth <- secure_server(
+    check_credentials = check_credentials(credentials)
+  )
+  
+  # Render authentication output
+  output$auth_output <- renderPrint({
+    reactiveValuesToList(res_auth)
+  })
   
   # --- Reactive Data Filtering ---
   filtered_data <- reactive({
@@ -118,7 +146,7 @@ server <- function(input, output, session) {
   output$sales_trend_plot <- renderPlotly({
     req(filtered_data())
     sales_trend <- filtered_data() %>%
-      group_by(InvoiceDate, Country) %>%
+      group_by(InvoiceDate = as.Date(InvoiceDate), Country) %>%
       summarise(TotalRevenue = sum(Revenue, na.rm = TRUE), .groups = 'drop')
     
     plot_ly(sales_trend, x = ~InvoiceDate, y = ~TotalRevenue, color = ~Country,
