@@ -87,8 +87,6 @@ auth_ui <- function(id) {
           color: #333;
         }
       ")),
-      # Additional custom login page styling can be added here
-      shinymanager::login_ui(ns("auth"))
     )
   )
 }
